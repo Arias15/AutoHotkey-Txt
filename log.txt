@@ -1,0 +1,613 @@
+; #INDEX# =======================================================================================================================
+; Title .........: Warrants
+; Version : 2.0
+; Description ...: Reporte del Control-D a un archivo excel.
+; Author(s) .....: ADBERTO ARIAS
+; ===============================================================================================================================
+; #ENTORNO#
+#NoEnv  ; Recommended for performance and compatibility with future AutoHotkey releases.
+SendMode Input  ; Recommended for new scripts due to its superior speed and reliability.
+SetWorkingDir %A_ScriptDir%  ; Ensures a consistent starting directory.
+#SingleInstance, Ignore
+; ===============================================================================================================================
+; #LIBRERIAS#
+#Include ../../lib/calcProgress.ahk
+#Include ../../lib/logLib.ahk
+#Include ../../lib/BitbucketLib.ahk
+#Include, ../../lib/PI_3270.ahk
+#Include ./Others/Estruc_Warrants.ahk
+
+; ===============================================================================================================================
+; #HOTKEY#
+; ===============================================================================================================================
+; #TRIGGER#
+Script_Start()
+; ===============================================================================================================================
+; #HEADER#
+;limpiamos el clipboard para que no afecte a la ejecución
+
+global RepDate, logfile, startDate, endDate
+Script_Start()
+{
+	Progress, m w280 y520, Verificando conexi`ón..., Warrant, [PI] - REPORTE WARRANT
+	Progress, 5
+	Clipboard =
+	;timestamp de inicio de ejecución
+	startDate := A_Now
+	;Checking connection and Updating local repository
+	conn := CheckConnection()
+	Progress, 50
+	If (conn = 1)
+	{
+		p = 50
+		;Uploading missing logs 
+		UpdateRemote()
+		connDate := A_Now
+		connTime := calcProgress(startDate, connDate)
+		;Siempre creamos un log nuevo y para ello elegimos una ubicación
+		logfile := log_createFile()
+		;Connection timestamp
+		Loop 45
+		{
+			Progress, %p%
+			p++
+		}	
+		Progress, 100, Conexi`ón verificada
+		sMsgConn := "Tiempo de conexión: " connTime " segundos"
+		log_Info(sMsgConn, logfile)
+		;escribimos la primera línea en el log
+		sMessageInicio := "Comienzo ejecución"
+		log_Info(sMessageInicio, logfile)		
+		;Comienzo ejecución
+		Sleep, 650
+		Progress, Hide
+		MainForm()
+	}	
+	Else
+	{
+		Progress, Hide
+		MsgBox, 48 , Sin Conexion, No existe conexi`ón con BitCucket. `nConectar e intentar otra vez. , 5
+		ExitApp
+	}
+}
+; ===============================================================================================================================
+; #CODIGO SCRIPT#
+global qu := Chr(191)
+global nh := Chr(241)
+global o := Chr(243) ; o con tilde
+global a := Chr(225)
+global ih := Chr(237)
+
+MainForm(){
+	static User, Pass, RepDate
+
+    yest = %A_Now%
+    
+    if A_WDay = 2
+    {
+        yest += -3, d
+    }
+    else
+    {
+        yest += -1, d
+    }
+
+    Gui, font,bold
+    Gui, Add, groupbox, yp+10 w280 h90, LOGIN
+    Gui, font
+    Gui, Add, Text, xp+20 yp+25, Usuario
+    Gui, Add, edit, y+10 w110 Limit7 Uppercase vUser
+    Gui, Add, Text, ym x+20 yp-23, Contrase`ña
+    Gui, Add,edit, Password y+10 w110 Limit8 vPass
+    Gui, font,bold
+    Gui, Add, groupbox, w280 h85 y+30 xm, Opciones de Reporte 
+    Gui, font
+    Gui, Add, Text, xp+87 yp+25, Fecha de reporte
+    Gui, Add, DateTime, y+10 wp20 h20 w110 vRepDate Section, dd/MM/yyyy
+    GuiControl,, RepDate, %yest%
+    Gui, Add, Button, default yp+45 w80 xm x45, Aceptar 
+    Gui, Add, Button, x+55 w80, Cancelar
+    Gui, Show
+
+    return
+
+	ButtonAceptar:
+	{
+		Gui, Submit
+		if (User = "" or Pass = ""){
+			MsgBox,0, Datos Incompletos, Por favor ingrese registro y contrase%nh%a.,5
+			Gui, Show
+		}
+		Else if not(RegExMatch(User, "^([p|P]{1}[0-9]{6})$")){
+			MsgBox,0, Error de Registro, Por favor ingrese registro correcto.,5
+			Gui, Show            
+			GuiControl, Gui:Focus, User        
+		}
+		else{
+			Progress, m2 w280 y520, Abriendo Host...,
+			Progress, 1
+
+			c3270 := new PI_z3270()                   
+			nxtsess := c3270.OpenHost("Hide")       	
+			
+			Progress, 5, Conectando Host..., 
+
+			if (nxtsess <> ""){       
+				conx := c3270.Connect()             ;Se usa la función Connect(session) del objeto instanciado c3270
+				if (conx <> ""){
+					Connect3270(c3270,Gui,User,Pass,RepDate)
+                    ExitApp
+				}else{
+					Progress, Hide
+					Gui, Show
+					MsgBox, ErrorDeConexion
+					Try{
+						c3270.CloseSess()
+					}
+				}
+				Progress, 6
+				Progress, 8
+				Progress, 10
+
+			}else{
+				Progress, Hide
+				Gui, Show
+				MsgBox, 0 , Sin Conexi%o%n , Intentar otra vez. , 5
+				Try{
+					c3270.CloseSess()
+				}
+			}
+		}
+	}
+    return
+	GuiClose:
+	GuiEscape:
+	ButtonCancelar:
+	ExitApp
+}
+
+Connect3270(c3270,Gui,User,Pass,RepDate){
+
+	c3270.sTxt("D", 24, 24)
+	c3270.sKey("e")
+	Progress, m2 w280 y520, Conectando,
+	Progress, 13, Conectando..., , 3270-CONTROLD
+
+	Credent_D(c3270,User,Pass)
+
+    Progress, m2 w280 y520, Extrayendo Reporte,
+	Progress, 15
+	
+	viol := trim(c3270.gTxt(1, 19, 9))
+	pctittle := trim(c3270.gTxt(1, 37, 12))
+	
+	if (viol = "VIOLATION"){
+		c3270.CloseSess()
+		Progress, Hide
+		MsgBox, 0, ERROR DE CREDENCIALES, Usuario y/o contrase%nh%a incorrecta.,5
+		xlobjs.Close()
+		Gui, Show        
+
+	}Else if (pctittle = "USER REPORTS"){
+
+        ReportStanBY(c3270, RepDate, ws, arrayWarrantLD, arrayWarrantLDB, res)
+
+        if (res = 1){
+
+            Progress, 81, Imprimiendo...
+            
+            nameTTS := "Reporte Warrant de "
+            xlobjs := creatExcel(nameTTS)
+            xl := xlobjs[1]
+            ws := xl.Sheets(1) 
+
+            Head(ws)
+
+            ToPrint(ws, arrayWarrantLD)
+            ToPrintB(ws, arrayWarrantLDB)
+
+            ws.columns("A:J").autoFit
+            Progress, 95,  Reporte Extraido
+            nDate := A_Now
+            xlname := SaveFile(ws,nameTTS,nDate)
+            xl.Visible := true
+            Progress, 100, FIN
+            Sleep, 850
+        }
+	}
+	Else{
+		Progress, Hide
+		MsgBox, 0, TIME OUT, Por favor Intentar otra vez.,5            
+		Gui, Show
+	}
+    return xlobjs     
+}
+
+SaveFile(ws,repName,FileDate){
+    DirPath := A_ScriptDir
+    nameFile := repName
+
+    FormatTime, nDate , %FileDate% , dd.MM.yy
+
+    FileName := nameFile " - " nDate
+    
+    FullPathName := DirPath "\" FileName ".xlsx"
+
+    ws.SaveAs(FullPathName)
+    return FullPathName
+}
+
+ReportStanBY(c3270, RepDate, ws, ByRef arrayWarrantLD, ByRef arrayWarrantLDB, ByRef res){
+
+    res = 0
+
+	FormatTime, nDate , %RepDate% , dd/MM/yy
+
+    FormatTime, cdDate , %RepDate% , ddMMyy
+
+    vResp := CtrolD_Rep(c3270,,,"GARANT WARRANTS VENC","*595*",cdDate,,"CRJP4000","N")
+    
+    if (vResp = 1){
+	
+        tittle := trim(c3270.gTxt(1, 2, 11))
+
+        if (tittle = "ACTIVE LIST"){
+
+            rrow := 4
+            patternV := trim(c3270.gTxt(rrow, 2, 1))
+
+            while (patternV = ""){
+
+                patternReport := trim(c3270.gTxt(rrow, 20, 8))
+
+                if ( patternReport = "WARRANTS" ){
+                    c3270.sTxt("V", rrow, 2)
+                }
+                rrow++
+                patternV := trim(c3270.gTxt(rrow, 2, 1))
+            }
+            c3270.sKey("e")
+            res = 1
+        }
+
+        filaControlD := 7
+        filaExcel := 2
+        
+
+        arrayWarrantLD := []
+        arrayWarrantLDB := []
+
+
+        pge := Trim(c3270.gTxt(1, 77, 4))
+        p := 16
+        vcontpage := 75 / pge
+
+        FormatTime, fCDate , %RepDate% , dd/MM/yyyy
+        fila:=7
+        loop{
+
+        
+            FechaCorte := fCDate
+            Clase := ""
+            final := ""
+
+            if (trim(c3270.gTxt(filaControlD, 3, 7)) = "OFICINA"){
+                Oficina := ""
+                NombreOficina := ""
+
+                Oficina := trim(c3270.gTxt(filaControlD, 13, 4))
+                NombreOficina := trim(c3270.gTxt(filaControlD, 18, 25))
+
+                
+                row2 := filaControlD
+                
+                While (trim(c3270.gTxt(row2, 37, 5)) != "TOTAL") {
+                    Garantia := ""
+                    Warrant := ""
+                    CodigoCliente := ""
+                    NombreCliente := "" 
+                    FechaVencimiento := "" 
+                    Moneda := ""
+                    Importe := ""
+                    Almacenera := ""
+                    Cant_dias := ""
+
+                    fecha3270_ven := ""
+
+                    Garantia := trim(c3270.gTxt(row2, 3, 8))
+                    Warrant := trim(c3270.gTxt(row2, 12, 10))
+                    CodigoCliente := trim(c3270.gTxt(row2, 23, 8))
+                    NombreCliente := trim(c3270.gTxt(row2, 32, 25))
+                    ; DateVenc
+                    FechaVencimiento_3270 := DateParse(trim(c3270.gTxt(row2, 79, 10)))
+                    FormatTime, FechaVencimiento , %FechaVencimiento_3270% , dd/MM/yyyy
+
+                    ; Currency
+                    SimMon := trim(c3270.gTxt(row2, 90, 3))
+                    if (SimMon ="S/" || SimMon = "S/." ){
+                        Moneda := "PEN"
+                    }
+                    else if (SimMon ="$" || SimMon = "$."){
+                        Moneda := "USD"
+                    }
+                    else{
+                        Moneda := SimMon
+                    }
+
+                    ;Amount
+                    Importe := trim(c3270.gTxt(row2, 94, 16))
+                    ;Almacenera
+
+                    
+                    Almacenera := trim(c3270.gTxt(row2, 111, 14))
+                    if (Almacenera = ""){
+                        Almacenera := "ALMAFIN"
+                    }
+                    
+                    ;DaysRest
+
+                    fecha3270_ven := DateParse(trim(c3270.gTxt(row2, 79, 10))) 
+                    FormatTime, F_ven_3270 , %fecha3270_ven% , yyyyMMddHHmmss
+                        if (F_ven_3270<RepDate){
+                            datefrom := F_ven_3270
+                            distance := RepDate
+                            distance -= datefrom, days
+
+                            cant_dom := 2*(Floor(distance/7))
+                            Cant_dias :=distance - cant_dom
+                            FormatTime, WDay, %F_ven_3270%, WDay
+                            if(Wday=1){ 
+                                Wday =7 
+                            }
+                            else{
+                                Wday -= 1
+                            }
+
+                            if ( Wday + Mod(distance,7)=6 && Wday != 6){
+                                Cant_dias -= 1
+                            }
+                            if ( Wday + Mod(distance,7)>6 && Wday != 7 && Wday != 6){
+                                Cant_dias -= 2 
+                            }
+                            if (Wday + Mod(distance,7)>6 && Wday = 6){
+                                Cant_dias -= 1
+                            }
+                            Cant_dias := -1*Cant_dias
+                        }
+                        else{
+                            datefrom := RepDate
+                            distance := F_ven_3270
+                            distance -= datefrom, days
+
+                            cant_dom := 2*(Floor(distance/7))
+
+                            Cant_dias :=distance - cant_dom
+                            FormatTime, WDay, %RepDate%, WDay
+                
+                            if(Wday=1){ 
+                                Wday:=7 
+                            }
+                            else{
+                                Wday -= 1
+                            }
+
+                            if ( Wday + Mod(distance,7)=6 && Wday != 6){
+                                Cant_dias -= 1
+                            }
+                            if ( Wday + Mod(distance,7)>6 && Wday != 7 && Wday !=6){
+                                Cant_dias -= 2 
+                            }
+                            if (Wday + Mod(distance,7)>6 && Wday = 6){
+                                Cant_dias -= 1
+                            }
+                            Cant_dias := +1*Cant_dias
+                        
+                        }
+               
+                    vRStandBy := new R_ComfortL()
+                    vRStandBy.Init(FechaCorte, Oficina, NombreOficina, Garantia, Warrant, CodigoCliente, NombreCliente, FechaVencimiento,Moneda,Importe,Almacenera,Cant_dias)
+        
+                    
+                    table := []
+                    table[1] := "0"
+                    table[2] := "1"
+                    table[3] := "2"
+                    table[4] := "3"
+                    table[5] := "4"
+                    table[6] := "5"
+                    table[7] := "6"
+                    table[8] := "7"
+                    table[9] := "8"
+                    table[10] := "9"
+
+
+                    i := 1
+                    loop{
+                        if (trim(c3270.gTxt(row2, 3, 1)) = table[i]) {
+                            arrayWarrantLD.push(vRStandBy)
+                            PrimerDig := trim(c3270.gTxt(row2, 3, 1))
+                        }
+                        i++
+                    }Until i=11
+                   
+                    row2++
+                    
+                    if (row2 > 26){
+                    c3270.sKey("f8") 
+                    row2 := 7
+                    }
+                    
+                    
+                } 
+                filaControlD :=row2
+                filaControlD++
+            } 
+                       
+            filaControlD++
+
+            if (filaControlD > 26){
+                pge1 := Trim(c3270.gTxt(1, 63, 4))
+                c3270.sKey("f8")
+                pge2 := Trim(c3270.gTxt(1, 63, 4))
+                filaControlD := 7
+
+                if (pge1 != pge2){
+                    p += vcontpage
+                    Progress, %p%
+                }
+            }
+           
+
+            final01 := trim(c3270.gTxt(filaControlD-1, 3, 10))
+        }until InStr(final01,">>") > 0	
+        
+        MsgBox salio
+    }
+    c3270.sKey("f3")
+    c3270.sKey("f3") 
+    c3270.sKey("f3")
+    c3270.sKey("c")   
+
+
+    vRespC := CesnLogin(c3270, "p024853", "madera69")
+
+    
+
+    if (vRespC = 1){
+        c3270.sTxt("CRGA",1,1)
+        c3270.sKey("e")
+        
+        c3270.sTxt("14",17,56)
+        c3270.sKey("e")
+
+        for i, k in arrayWarrantLD{
+            FechaLim := ""
+            Glosa := ""
+            Prorrogable := ""
+            Observacion := ""
+            OficinaCRGA := ""
+            
+            garantiaB := k.Garantia
+            FechaVenB := k.FechaVencimiento
+            Cant_diasB := k.Cant_dias
+
+            c3270.sTxt("14",17,56)
+            c3270.sKey("e")
+            c3270.sTxt(garantiaB,18,56)
+            c3270.sKey("e")
+            if (trim(c3270.gTxt(23, 10, 28)) != "NUMERO DE GARANTIA NO EXISTE"){
+                
+                FechaLim_3270 := DateParse(trim(c3270.gTxt(18, 67, 10)))
+                FormatTime, FechaLim , %FechaLim_3270% , dd/MM/yyyy
+                
+                Glosa := trim(c3270.gTxt(20, 17, 60))
+                ;Prorrogable?
+                if(FechaVenB = FechaLim ){
+                    Prorrogable := "No"
+                }else{
+                    Prorrogable := "Si"
+                }
+
+                OficinaCRGA := trim(c3270.gTxt(7, 66, 4))
+                ;Clase
+                if (Cant_diasB < 0){
+                    Clase := "1. Vencido"
+                }
+                if (1<= Cant_diasB && Cant_diasB <= 7){
+                    Clase := "2. Próximos 7 días"
+                }
+                if (7 < Cant_diasB && Cant_diasB <= 15){
+                    Clase := "3. Entre 7 y 15 días"
+                }
+                if (Cant_diasB > 15){
+                    Clase := "4. Más de 15 días"
+                }
+
+                vRStandBy := new R_ComfortL()        
+                vRStandBy.InitB(FechaLim, Glosa,Prorrogable, OficinaCRGA,Clase)
+                arrayWarrantLDB.push(vRStandBy)
+                
+                c3270.sKey("c")
+            }
+
+       	}      
+    }
+    Return
+}
+
+Head(ws){
+	newlwords := ["FechaCorte", "Oficina", "NombreOficina", "Garantia", "Warrant", "CodigoCliente", "NombreCliente", "FechaVencimiento","Moneda","Importe","Almacenera","Cant_dias","Fecha_Limite_Prorroga","Glosa","¿Prorrogable?","Observaciones","OficinaCRGA","Clase"]
+
+	i=1
+	for i,head in newlwords{      
+		ws.Cells(1,i) := head
+		i++
+	}
+
+	hrange := ws.Range(ws.Cells(1,1),ws.Cells(1,18))
+	hrange.HorizontalAlignment := -4108         ; xlCenter
+   
+
+	hrange.Font.Bold := True
+
+    ws.Columns("A:R").NumberFormat := "@" 
+
+}
+
+PerfectSplit(line){
+    lwords := StrSplit(line,A_Space)
+
+    blanks := []
+
+    for i, el in lwords{                 
+        if (trim(el) = ""){
+            blanks.push(i)
+        }
+    }        
+
+    resta := 0
+    for b, bla in blanks{
+        rem := bla - resta
+        lwords.removeAt(rem)
+        resta++
+    }
+    return lwords
+}
+
+Join(sep, params*) {
+	for index,param in params
+		str .= param . sep
+	return SubStr(str, 1, -StrLen(sep))
+}
+
+creatExcel(repName){
+    xlobjs := []
+
+    shName := "REPORTE"
+    xl := ComObjCreate("Excel.Application") 
+    wb := xl.Workbooks.Add
+    wb.ActiveSheet.Name := shName
+
+    xlobjs.push(xl,wb)
+    ;xl.Visible := True
+    return xlobjs
+}
+
+;====================================================================================================
+; #CIERRE SCRIPT#
+Script_End()
+{
+	Gui, Destroy
+	endDate := A_Now
+	;calculamos el tiempo de ejecución
+	totalTime := calcProgress(startDate, endDate)
+	sMessageFin := "Fin ejecución. Tiempo de ejecución: " . totalTime . " segundos"
+	log_End(sMessageFin, logfile)
+	;subimos el fichero log a bitbucket
+	;file := checkLogInDir(file)
+	UploadFile(logfile)
+	;limpiamos el clipboard para que no afecte a la ejecución
+	Clipboard =
+	ExitApp
+}
+; ===============================================================================================================================
